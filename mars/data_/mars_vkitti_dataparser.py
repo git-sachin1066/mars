@@ -69,10 +69,6 @@ def extract_object_information(args, visible_objects, objects_meta):
         # [..., width+height+length]
         # obj_dim = visible_objects[:, :, 4:7]
         sh = obj_state.shape
-    elif args.dataset_type == "carla":
-        obj_state = visible_objects[:, :, [7, 8, 9, 2, -1]]
-        obj_dir = visible_objects[:, :, 10][..., None]
-        sh = obj_state.shape
     elif args.dataset_type == "waymo_od":
         obj_state = visible_objects[:, :, [7, 8, 9, 2, -1]]
         obj_dir = visible_objects[:, :, 10][..., None]
@@ -316,22 +312,22 @@ def get_semantic_information(path):
 
 
 @dataclass
-class MarsCarlaDataParserConfig(DataParserConfig):
+class MarsVKittiDataParserConfig(DataParserConfig):
     """nerual scene graph dataset parser config"""
 
-    _target: Type = field(default_factory=lambda: MarsCarlaParser)
+    _target: Type = field(default_factory=lambda: MarsVKittiParser)
     """target class to instantiate"""
     data: Path = Path("/data1/vkitti/Scene06/clone")
     """Directory specifying location of data."""
-    scale_factor: float = 0.015
+    scale_factor: float = 0.1
     """How much to scale the camera origins by."""
-    scene_scale: float = 1.3
+    scene_scale: float = 2.0
     """How much to scale the region of interest by."""
     alpha_color: str = "white"
     """alpha color of background"""
     first_frame: int = 0
     """specifies the beginning of a sequence if not the complete scene is taken as Input"""
-    last_frame: int = 548
+    last_frame: int = 237
     """specifies the end of a sequence"""
     use_object_properties: bool = True
     """ use pose and properties of visible objects as an input """
@@ -350,7 +346,7 @@ class MarsCarlaDataParserConfig(DataParserConfig):
     """specifies the distance from the last pose to the near plane"""
     far_plane: float = 150.0
     """specifies the distance from the last pose to the far plane"""
-    dataset_type: str = "carla"
+    dataset_type: str = "vkitti"
     obj_only: bool = False
     """Train object models on rays close to the objects only"""
     netchunk: int = 1024 * 64
@@ -378,12 +374,12 @@ class MarsCarlaDataParserConfig(DataParserConfig):
 
 
 @dataclass
-class MarsCarlaParser(DataParser):
+class MarsVKittiParser(DataParser):
     """nerual scene graph kitti Dataset"""
 
-    config: MarsCarlaDataParserConfig
+    config: MarsVKittiDataParserConfig
 
-    def __init__(self, config: MarsCarlaDataParserConfig):
+    def __init__(self, config: MarsVKittiDataParserConfig):
         super().__init__(config=config)
         self.data: Path = config.data
         self.scale_factor: float = config.scale_factor
@@ -492,7 +488,21 @@ class MarsCarlaParser(DataParser):
                         ext = extrinsic[frame_num * n_cam : frame_num * n_cam + n_cam, :][cam][2:]
                         ext = np.reshape(ext, (-1, 4))
                         extrinsics.append(ext)
-                        poses = extrinsics
+
+                        # Get camera pose and location from extrinsics
+                        pose = np.zeros([4, 4])
+                        pose[3, 3] = 1
+                        R = np.transpose(ext[:3, :3])
+                        t = -ext[:3, -1]
+
+                        # Camera position described in world coordinates
+                        pose[:3, -1] = np.matmul(R, t)
+                        # Match OpenGL definition of Z
+                        pose[:3, :3] = np.matmul(np.eye(3), np.matmul(np.eye(3), R))
+                        # Rotate pi around Z
+                        pose[:3, 2] = -pose[:3, 2]
+                        pose[:3, 1] = -pose[:3, 1]
+                        poses.append(pose)
                         frame_id.append([frame_num, cam, 0])
 
                         count.append(len(imgs) - 1)
@@ -502,7 +512,6 @@ class MarsCarlaParser(DataParser):
 
         origins = poses[..., :3, 3]
         mean_origin = origins.mean(axis=0)
-
         poses[..., :3, 3] = origins - mean_origin
         object_pose[..., 7:10] = object_pose[..., 7:10] - mean_origin
 
@@ -678,4 +687,4 @@ class MarsCarlaParser(DataParser):
         return dataparser_outputs
 
 
-CarlaParserSpec = DataParserSpecification(config=MarsCarlaDataParserConfig())
+VKittiParserSpec = DataParserSpecification(config=MarsVKittiDataParserConfig())
